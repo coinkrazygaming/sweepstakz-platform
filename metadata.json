@@ -1,0 +1,7 @@
+{
+  "name": "SweepStack SaaS Platform",
+  "description": "A comprehensive, multi-tenant sweepstakes casino SaaS platform allowing operators to launch branded casino sites with Gold Coin/Sweeps Coin mechanics, compliance engines, and integrated game logic.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
