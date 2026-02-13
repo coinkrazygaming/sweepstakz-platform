@@ -82,6 +82,12 @@ const App: React.FC = () => {
 
   // Multi-Tenant Management
   const [editingOperatorId, setEditingOperatorId] = useState<string | null>(null);
+  const [isProvisioning, setIsProvisioning] = useState(false);
+  const [provisionDraft, setProvisionDraft] = useState({
+    name: '',
+    subdomain: '',
+    tier: 'BASIC' as const
+  });
   const [brandingDraft, setBrandingDraft] = useState({
     siteName: '',
     primaryColor: '#6366f1',
@@ -312,6 +318,66 @@ const App: React.FC = () => {
     addLog('REDEMPTION_REQUEST', `Player requested ${amount} SC redemption`);
   };
 
+  const handleRedemptionAction = (transactionId: string, status: 'COMPLETED' | 'REJECTED') => {
+    setStore(prev => {
+      const txn = prev.transactions.find(t => t.id === transactionId);
+      if (!txn) return prev;
+
+      const updatedTransactions = prev.transactions.map(t =>
+        t.id === transactionId ? { ...t, status } : t
+      );
+
+      // If rejected, refund the player
+      let updatedUsers = prev.users;
+      if (status === 'REJECTED') {
+        updatedUsers = prev.users.map(u => {
+          if (u.id !== txn.userId || !u.wallet) return u;
+          return {
+            ...u,
+            wallet: {
+              ...u.wallet,
+              sweepsCoins: u.wallet.sweepsCoins + Math.abs(txn.amount)
+            }
+          };
+        });
+
+        // Update session if it's the current user
+        if (currentUser?.id === txn.userId) {
+          updateSessionWallet(txn.userId, CurrencyType.SWEEPS_COIN, Math.abs(txn.amount));
+        }
+      }
+
+      return {
+        ...prev,
+        transactions: updatedTransactions,
+        users: updatedUsers
+      };
+    });
+    addLog('REDEMPTION_PROCESSED', `Redemption ${transactionId} marked as ${status}`);
+  };
+
+  const adjustPlayerWallet = (userId: string, currency: CurrencyType, amount: number) => {
+    setStore(prev => ({
+      ...prev,
+      users: prev.users.map(u => {
+        if (u.id !== userId || !u.wallet) return u;
+        return {
+          ...u,
+          wallet: {
+            ...u.wallet,
+            goldCoins: currency === CurrencyType.GOLD_COIN ? u.wallet.goldCoins + amount : u.wallet.goldCoins,
+            sweepsCoins: currency === CurrencyType.SWEEPS_COIN ? u.wallet.sweepsCoins + amount : u.wallet.sweepsCoins
+          }
+        };
+      })
+    }));
+
+    if (currentUser?.id === userId) {
+      updateSessionWallet(userId, currency, amount);
+    }
+    addLog('WALLET_ADJUSTED', `Adjusted ${userId} wallet: ${amount} ${currency}`);
+  };
+
   const handleGrantDailyBonus = (playerId: string) => {
     if (!activeOperator) return;
     const { dailyGC, dailySC } = activeOperator.bonusConfig;
@@ -406,6 +472,49 @@ const App: React.FC = () => {
       )
     }));
     addLog('BRANDING_UPDATED', `Operator ${activeOperator.name} branding updated`);
+  };
+
+  const handleProvision = () => {
+    const newOp: Operator = {
+      id: `op-${Date.now()}`,
+      name: provisionDraft.name,
+      subdomain: provisionDraft.subdomain,
+      branding: {
+        primaryColor: '#6366f1',
+        logoUrl: '',
+        siteName: provisionDraft.name
+      },
+      active: true,
+      revenue: 0,
+      platformFeesPaid: 0,
+      subscriptionTier: provisionDraft.tier,
+      rtpOverrideEnabled: false,
+      maxRtpLimit: 96.5,
+      assignedGames: store.globalGames.slice(0, 1).map(g => g.id),
+      disabledGames: [],
+      bonusConfig: { welcomeGC: 1000, welcomeSC: 1, dailyGC: 500, dailySC: 0.1 }
+    };
+
+    setStore(prev => ({
+      ...prev,
+      operators: [...prev.operators, newOp]
+    }));
+    setIsProvisioning(false);
+    setProvisionDraft({ name: '', subdomain: '', tier: 'BASIC' });
+    addLog('TENANT_PROVISIONED', `New shard node provisioned: ${newOp.name}`);
+  };
+
+  const toggleGameAssignment = (operatorId: string, gameId: string) => {
+    setStore(prev => ({
+      ...prev,
+      operators: prev.operators.map(op => {
+        if (op.id !== operatorId) return op;
+        const assignedGames = op.assignedGames.includes(gameId)
+          ? op.assignedGames.filter(id => id !== gameId)
+          : [...op.assignedGames, gameId];
+        return { ...op, assignedGames };
+      })
+    }));
   };
 
   // --- ART LAB ENGINE ---
@@ -938,7 +1047,7 @@ const App: React.FC = () => {
                     <p className="text-xl font-black text-indigo-400 italic">{op.assignedGames.length}</p>
                   </div>
                 </div>
-                <button 
+                <button
                   onClick={() => setEditingOperatorId(op.id)}
                   className="w-full py-5 bg-slate-900 rounded-2xl text-white font-black uppercase text-[10px] tracking-widest hover:bg-indigo-600 transition-all shadow-xl group-hover:shadow-[0_0_30px_rgba(99,102,241,0.2)]"
                 >
@@ -952,39 +1061,129 @@ const App: React.FC = () => {
           ))}
         </div>
         {selectedOperator && (
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6">
-            <div className="max-w-3xl w-full glass rounded-[3.5rem] border border-white/10 p-10 shadow-2xl">
-              <div className="flex justify-between items-start mb-8">
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+            <div className="max-w-4xl w-full glass rounded-[3.5rem] border border-white/10 p-12 shadow-2xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-start mb-12">
                 <div>
-                  <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest">Shard Control Node</p>
-                  <h3 className="text-3xl font-black italic text-white uppercase tracking-tight">{selectedOperator.name}</h3>
+                  <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-2">Shard Control Node</p>
+                  <h3 className="text-4xl font-black italic text-white uppercase tracking-tight">{selectedOperator.name}</h3>
                 </div>
                 <button
                   onClick={() => setEditingOperatorId(null)}
-                  className="px-4 py-2 bg-white/10 rounded-xl text-white text-xs font-black uppercase tracking-widest"
+                  className="w-12 h-12 flex items-center justify-center bg-white/5 rounded-2xl text-white hover:bg-white/10 transition-all"
                 >
-                  Close
+                  <i className="fa-solid fa-xmark"></i>
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
                 <MetricCard label="Subscription" value={selectedOperator.subscriptionTier} />
                 <MetricCard label="RTP Cap" value={`${selectedOperator.maxRtpLimit}%`} />
                 <MetricCard label="Status" value={selectedOperator.active ? 'Active' : 'Paused'} />
-                <MetricCard label="Assigned Games" value={selectedOperator.assignedGames.length} />
+                <MetricCard label="Nodes Active" value={selectedOperator.assignedGames.length} />
               </div>
-              <div className="flex flex-wrap gap-4">
-                <button
-                  onClick={() => handleToggleOperatorStatus(selectedOperator.id)}
-                  className="px-8 py-4 bg-indigo-600 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all"
-                >
-                  {selectedOperator.active ? 'Pause Node' : 'Activate Node'}
-                </button>
-                <button
-                  onClick={() => setEditingOperatorId(null)}
-                  className="px-8 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest hover:scale-[1.02] transition-all"
-                >
-                  Return to Fleet
-                </button>
+
+              <div className="space-y-12">
+                <div>
+                  <h4 className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-8">Game Shard Assignment</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {store.globalGames.map(game => {
+                      const isAssigned = selectedOperator.assignedGames.includes(game.id);
+                      return (
+                        <div key={game.id} className={`p-6 rounded-[2rem] border transition-all flex items-center justify-between ${isAssigned ? 'bg-indigo-600/20 border-indigo-500/30' : 'bg-black/40 border-white/5'}`}>
+                          <div className="flex items-center gap-4">
+                            <img src={game.imageUrl} className="w-12 h-12 rounded-xl object-cover" />
+                            <div>
+                              <p className="text-sm font-black text-white italic">{game.name}</p>
+                              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{game.mathModel.volatility} Volatility</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => toggleGameAssignment(selectedOperator.id, game.id)}
+                            className={`px-6 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${isAssigned ? 'bg-red-500 text-white' : 'bg-white text-black'}`}
+                          >
+                            {isAssigned ? 'Remove' : 'Assign'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-4 pt-8 border-t border-white/5">
+                  <button
+                    onClick={() => handleToggleOperatorStatus(selectedOperator.id)}
+                    className={`px-10 py-5 font-black rounded-2xl text-[10px] uppercase tracking-widest transition-all ${selectedOperator.active ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'bg-green-500 text-white'}`}
+                  >
+                    {selectedOperator.active ? 'Pause Shard Node' : 'Activate Shard Node'}
+                  </button>
+                  <button
+                    onClick={() => setEditingOperatorId(null)}
+                    className="px-10 py-5 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest hover:scale-[1.02] transition-all"
+                  >
+                    Return to Fleet
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {isProvisioning && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+            <div className="max-w-2xl w-full glass rounded-[3.5rem] border border-white/10 p-12 shadow-2xl">
+              <h3 className="text-3xl font-black italic text-white uppercase tracking-tighter mb-10">Provision New Shard Node</h3>
+              <div className="space-y-8">
+                <label className="block space-y-3">
+                  <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">Operator Name</span>
+                  <input
+                    type="text"
+                    value={provisionDraft.name}
+                    onChange={e => setProvisionDraft(prev => ({ ...prev, name: e.target.value }))}
+                    className="w-full bg-black/40 border border-white/5 rounded-2xl p-6 text-white text-sm outline-none focus:border-indigo-500 transition-all"
+                    placeholder="e.g. Diamond Shard Casino"
+                  />
+                </label>
+                <label className="block space-y-3">
+                  <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">Subdomain Shard</span>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={provisionDraft.subdomain}
+                      onChange={e => setProvisionDraft(prev => ({ ...prev, subdomain: e.target.value }))}
+                      className="w-full bg-black/40 border border-white/5 rounded-2xl p-6 text-white text-sm outline-none focus:border-indigo-500 transition-all pr-40"
+                      placeholder="diamond"
+                    />
+                    <span className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-500 font-mono text-xs">.sweepstack.io</span>
+                  </div>
+                </label>
+                <label className="block space-y-3">
+                  <span className="text-[10px] text-slate-500 font-black uppercase tracking-widest ml-1">Subscription Tier</span>
+                  <select
+                    value={provisionDraft.tier}
+                    onChange={e => setProvisionDraft(prev => ({ ...prev, tier: e.target.value as any }))}
+                    className="w-full bg-black/40 border border-white/5 rounded-2xl p-6 text-white text-sm outline-none focus:border-indigo-500 transition-all"
+                  >
+                    <option value="BASIC">Basic Shard</option>
+                    <option value="PRO">Professional Matrix</option>
+                    <option value="ENTERPRISE">Enterprise Galaxy</option>
+                  </select>
+                </label>
+                <div className="flex gap-4 pt-8">
+                  <button
+                    onClick={handleProvision}
+                    disabled={!provisionDraft.name || !provisionDraft.subdomain}
+                    className="flex-1 py-5 bg-indigo-600 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all disabled:opacity-30 shadow-2xl"
+                  >
+                    Provision Node
+                  </button>
+                  <button
+                    onClick={() => setIsProvisioning(false)}
+                    className="flex-1 py-5 bg-white/5 text-slate-400 font-black rounded-2xl text-[10px] uppercase tracking-widest hover:bg-white/10 transition-all"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -999,28 +1198,50 @@ const App: React.FC = () => {
     const totalPlayers = store.users.filter(user => user.role === UserRole.PLAYER).length;
 
     return (
-      <div className="space-y-10 animate-fadeIn">
+      <div className="space-y-12 animate-fadeIn">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <MetricCard label="Platform Revenue" value={'$' + totalRevenue.toLocaleString()} />
-          <MetricCard label="Platform Fees" value={'$' + totalFees.toLocaleString()} />
-          <MetricCard label="Active Players" value={totalPlayers.toLocaleString()} />
+          <MetricCard label="Global Fleet Revenue" value={'$' + totalRevenue.toLocaleString()} />
+          <MetricCard label="Platform Royalties" value={'$' + totalFees.toLocaleString()} />
+          <MetricCard label="Network Population" value={totalPlayers.toLocaleString()} />
         </div>
-        <div className="glass p-10 rounded-[3.5rem] border border-white/5 shadow-2xl">
-          <h3 className="text-xl font-black italic text-white uppercase tracking-tighter mb-8">Operator Performance Grid</h3>
-          <div className="space-y-4">
-            {store.operators.map(op => (
-              <div key={op.id} className="flex flex-col md:flex-row md:items-center justify-between gap-6 p-6 bg-black/40 rounded-2xl border border-white/5">
-                <div>
-                  <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest">{op.subscriptionTier} Tier</p>
-                  <p className="text-lg font-black text-white italic uppercase tracking-tight">{op.name}</p>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="glass p-10 rounded-[3.5rem] border border-white/5 shadow-2xl">
+            <h3 className="text-xl font-black italic text-white uppercase tracking-tighter mb-8">Node Performance Shards</h3>
+            <div className="space-y-6">
+              {store.operators.map(op => (
+                <div key={op.id} className="space-y-2">
+                  <div className="flex justify-between items-end px-2">
+                    <p className="text-[10px] font-black text-white uppercase italic">{op.name}</p>
+                    <p className="text-[10px] font-black text-indigo-400 italic">${op.revenue.toLocaleString()}</p>
+                  </div>
+                  <div className="w-full h-3 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full transition-all duration-1000"
+                      style={{ width: `${Math.min(100, (op.revenue / (totalRevenue || 1)) * 100)}%` }}
+                    ></div>
+                  </div>
                 </div>
-                <div className="flex flex-wrap gap-4">
-                  <MetricPill label="Revenue" value={'$' + op.revenue.toLocaleString()} />
-                  <MetricPill label="Fees" value={'$' + op.platformFeesPaid.toLocaleString()} />
-                  <MetricPill label="RTP Cap" value={`${op.maxRtpLimit}%`} />
+              ))}
+            </div>
+          </div>
+
+          <div className="glass p-10 rounded-[3.5rem] border border-white/5 shadow-2xl">
+            <h3 className="text-xl font-black italic text-white uppercase tracking-tighter mb-8">Settlement Grid</h3>
+            <div className="space-y-4">
+              {store.operators.map(op => (
+                <div key={op.id} className="flex items-center justify-between p-5 bg-black/40 rounded-2xl border border-white/5">
+                  <div>
+                    <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest">{op.subscriptionTier} Shard</p>
+                    <p className="text-sm font-black text-white italic uppercase">{op.name}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest">Fees Due</p>
+                    <p className="text-sm font-black text-green-400 italic">${(op.revenue * 0.1).toLocaleString()}</p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -1111,14 +1332,45 @@ const App: React.FC = () => {
     if (!activeOperator) return null;
     const totalGC = operatorPlayers.reduce((sum, player) => sum + (player.wallet?.goldCoins || 0), 0);
     const totalSC = operatorPlayers.reduce((sum, player) => sum + (player.wallet?.sweepsCoins || 0), 0);
+    const pendingRedemptions = operatorTransactions.filter(t => t.type === 'REDEMPTION_REQUEST' && t.status === 'PENDING');
 
     return (
-      <div className="space-y-10 animate-fadeIn">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <MetricCard label="Operator Revenue" value={'$' + activeOperator.revenue.toLocaleString()} />
-          <MetricCard label="Wallet Float (GC)" value={totalGC.toLocaleString()} />
-          <MetricCard label="Wallet Float (SC)" value={totalSC.toFixed(2)} />
+      <div className="space-y-12 animate-fadeIn">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <MetricCard label="Node Revenue" value={'$' + activeOperator.revenue.toLocaleString()} />
+          <MetricCard label="Active Players" value={operatorPlayers.length} />
+          <MetricCard label="Float (SC)" value={totalSC.toFixed(2)} />
+          <MetricCard label="Pending Cash-outs" value={pendingRedemptions.length} />
         </div>
+
+        {pendingRedemptions.length > 0 && (
+          <div className="glass p-10 rounded-[3.5rem] border border-amber-500/20 bg-amber-500/5 shadow-2xl">
+            <h3 className="text-xl font-black italic text-white uppercase tracking-tighter mb-8 flex items-center gap-3">
+              <i className="fa-solid fa-triangle-exclamation text-amber-500"></i> Urgent Redemptions
+            </h3>
+            <div className="space-y-4">
+              {pendingRedemptions.map(txn => (
+                <div key={txn.id} className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 p-6 bg-black/40 rounded-3xl border border-white/5">
+                  <div>
+                    <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-1">{txn.userId}</p>
+                    <p className="text-lg font-black text-white italic uppercase tracking-tight">Request: {Math.abs(txn.amount)} SC</p>
+                  </div>
+                  <div className="flex gap-4">
+                    <button
+                      onClick={() => handleRedemptionAction(txn.id, 'COMPLETED')}
+                      className="px-8 py-3 bg-green-500 text-white font-black rounded-xl text-[9px] uppercase tracking-widest hover:bg-green-400 transition-all shadow-lg"
+                    >Approve</button>
+                    <button
+                      onClick={() => handleRedemptionAction(txn.id, 'REJECTED')}
+                      className="px-8 py-3 bg-red-500/10 text-red-500 border border-red-500/20 font-black rounded-xl text-[9px] uppercase tracking-widest hover:bg-red-500/20 transition-all"
+                    >Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="glass p-10 rounded-[3.5rem] border border-white/5 shadow-2xl">
           <h3 className="text-xl font-black italic text-white uppercase tracking-tighter mb-8">Recent Operator Transactions</h3>
           <div className="space-y-4">
@@ -1164,12 +1416,24 @@ const App: React.FC = () => {
                 <MetricPill label="SC" value={player.wallet?.sweepsCoins.toFixed(2) || '0.00'} />
                 <MetricPill label="Last Bonus" value={player.lastDailyClaim ? new Date(player.lastDailyClaim).toLocaleDateString() : 'Never'} />
               </div>
-              <button
-                onClick={() => handleGrantDailyBonus(player.id)}
-                className="px-6 py-3 bg-indigo-600 text-white font-black rounded-xl text-[9px] uppercase tracking-widest hover:bg-indigo-500 transition-all"
-              >
-                Grant Daily Bonus
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => adjustPlayerWallet(player.id, CurrencyType.GOLD_COIN, 500)}
+                  className="p-3 bg-white/5 hover:bg-white/10 text-yellow-500 rounded-xl transition-all"
+                  title="Credit 500 GC"
+                ><i className="fa-solid fa-coins"></i></button>
+                <button
+                  onClick={() => adjustPlayerWallet(player.id, CurrencyType.SWEEPS_COIN, 5)}
+                  className="p-3 bg-white/5 hover:bg-white/10 text-blue-400 rounded-xl transition-all"
+                  title="Credit 5 SC"
+                ><i className="fa-solid fa-gem"></i></button>
+                <button
+                  onClick={() => handleGrantDailyBonus(player.id)}
+                  className="px-6 py-3 bg-indigo-600 text-white font-black rounded-xl text-[9px] uppercase tracking-widest hover:bg-indigo-500 transition-all"
+                >
+                  Grant Daily Bonus
+                </button>
+              </div>
             </div>
           ))
         )}
@@ -1243,13 +1507,23 @@ const App: React.FC = () => {
     return config[activeTab] || config.GAMES;
   }, [activeTab]);
 
+  const handleSwitchRole = (role: UserRole) => {
+    setCurrentUser(prev => {
+      if (!prev) return prev;
+      const updated = { ...prev, role };
+      localStorage.setItem('sweepstack_session', JSON.stringify(updated));
+      return updated;
+    });
+    addLog('ROLE_SWITCH', `User switched role to ${role}`);
+  };
+
   return (
-    <Layout 
-      user={currentUser} 
-      operator={activeOperator} 
-      onLogout={handleLogout} 
-      onSwitchRole={() => {}} 
-      activeTab={activeTab} 
+    <Layout
+      user={currentUser}
+      operator={activeOperator}
+      onLogout={handleLogout}
+      onSwitchRole={handleSwitchRole}
+      activeTab={activeTab}
       onTabChange={setActiveTab}
     >
       {currentUser?.role === UserRole.MASTER_ADMIN && (
@@ -1261,7 +1535,12 @@ const App: React.FC = () => {
               <TabButton label="AI Command Lab" active={activeTab === 'STUDIO'} onClick={() => setActiveTab('STUDIO')} />
               <TabButton label="Audit Oracle" active={activeTab === 'AUDIT'} onClick={() => setActiveTab('AUDIT')} />
             </div>
-            <button className="px-10 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-3xl hover:bg-indigo-50 transition-all active:scale-95">Provision New Shard Node</button>
+            <button
+              onClick={() => setIsProvisioning(true)}
+              className="px-10 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-3xl hover:bg-indigo-50 transition-all active:scale-95"
+            >
+              Provision New Shard Node
+            </button>
           </div>
           {activeTab === 'TENANTS' && renderTenants()}
           {activeTab === 'REVENUE' && renderRevenue()}

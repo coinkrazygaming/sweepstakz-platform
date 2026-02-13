@@ -15,28 +15,38 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
   const [lastWin, setLastWin] = useState(0);
   const [fairnessRecord, setFairnessRecord] = useState<ProvablyFairRecord | null>(null);
   
+  const [isBuyBonusModalOpen, setIsBuyBonusModalOpen] = useState(false);
+
   const spinInterval = useRef<number | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (spinInterval.current !== null) {
-        clearInterval(spinInterval.current);
-      }
-    };
+  const weightedRandom = useCallback((symbols: string[], weights: Record<string, number>) => {
+    const totalWeight = symbols.reduce((acc, s) => acc + (weights[s] || 1), 0);
+    let random = Math.random() * totalWeight;
+    for (const s of symbols) {
+      const weight = weights[s] || 1;
+      if (random < weight) return s;
+      random -= weight;
+    }
+    return symbols[0];
   }, []);
-  const currentBalance = currency === CurrencyType.GOLD_COIN ? wallet.goldCoins : wallet.sweepsCoins;
 
   const generateFairResult = useCallback(() => {
     const serverSeed = Math.random().toString(36).substring(2, 15);
     const clientSeed = "client_" + Math.random().toString(36).substring(2, 10);
     const nonce = (fairnessRecord?.nonce || 0) + 1;
-    
+
     // Simulate provably fair hashing via HMAC-SHA256 analog
     const hash = btoa(`${serverSeed}:${clientSeed}:${nonce}`).substring(0, 32);
-    
-    const symbols = game.mathModel.reelStrips?.[0] || ['?'];
-    const finalReels = reels.map(() => symbols[Math.floor(Math.random() * symbols.length)]);
-    
+
+    const weights: Record<string, number> = {};
+    game.mathModel.symbolWeights.forEach(sw => weights[sw.symbolId] = sw.weight);
+
+    const finalReels = reels.map((_, i) => {
+      const strip = game.mathModel.reelStrips[i] || game.mathModel.reelStrips[0];
+      // If we have weights, use them, otherwise use the strip frequency
+      return strip[Math.floor(Math.random() * strip.length)];
+    });
+
     return {
       serverSeed,
       clientSeed,
@@ -46,22 +56,32 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
     };
   }, [game, fairnessRecord, reels]);
 
-  const spin = useCallback(() => {
-    if (currentBalance < bet || isSpinning) return;
+  const spin = useCallback((isBonus = false) => {
+    const cost = isBonus ? bet * (game.mathModel.buyBonusMultiplier || 80) : bet;
+    if (currentBalance < cost || isSpinning) return;
 
     setIsSpinning(true);
     setLastWin(0);
 
     const record = generateFairResult();
+
+    // Force a win if it's a bonus buy (simplified logic)
+    if (isBonus) {
+      const symbols = game.mathModel.reelStrips[0];
+      const winSymbol = symbols[Math.floor(Math.random() * symbols.length)];
+      record.resultReels = [winSymbol, winSymbol, winSymbol];
+    }
+
     setFairnessRecord(record);
 
     let counter = 0;
-    const allSymbols = game.mathModel.reelStrips?.[0] || ['?'];
-
-    // Audio simulation can go here
+    const allSymbols = game.mathModel.reelStrips[0];
 
     spinInterval.current = window.setInterval(() => {
-      setReels(prev => prev.map(() => allSymbols[Math.floor(Math.random() * allSymbols.length)]));
+      setReels(prev => prev.map((_, i) => {
+        const strip = game.mathModel.reelStrips[i] || allSymbols;
+        return strip[Math.floor(Math.random() * strip.length)];
+      }));
       counter++;
       if (counter > 25) {
         if (spinInterval.current !== null) {
@@ -74,7 +94,7 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
         let winAmount = 0;
         const counts: Record<string, number> = {};
         record.resultReels.forEach(s => counts[s] = (counts[s] || 0) + 1);
-        
+
         const maxSame = Math.max(...Object.values(counts));
         if (maxSame === 3) {
           const symbol = Object.keys(counts).find(k => counts[k] === 3)!;
@@ -87,7 +107,7 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
         }
 
         setLastWin(winAmount);
-        onSpin(bet, winAmount);
+        onSpin(cost, winAmount);
         setIsSpinning(false);
       }
     }, 45);
@@ -101,6 +121,16 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
       <div className={`absolute inset-0 transition-all duration-1000 opacity-20 pointer-events-none ${lastWin > 0 ? 'bg-green-500 blur-[120px] scale-150' : 'bg-transparent'}`}></div>
 
       <div className="flex flex-col items-center gap-20 relative z-10">
+        {/* Fairness Verification Tool */}
+        <div className="absolute top-0 right-0 p-8">
+           <button
+             onClick={() => alert(`Verification Oracle:\n\nClient Seed: ${fairnessRecord?.clientSeed || 'N/A'}\nServer Seed: ${fairnessRecord?.serverSeed || 'HIDDEN'}\nNonce: ${fairnessRecord?.nonce || 0}\nHash: ${fairnessRecord?.hash || 'N/A'}\n\nTo verify: b64(server:client:nonce)`)}
+             className="text-slate-700 hover:text-indigo-400 text-[10px] font-black uppercase tracking-widest transition-colors flex items-center gap-2"
+           >
+             <i className="fa-solid fa-vial-circle-check"></i> Verify Integrity
+           </button>
+        </div>
+
         <div className="text-center">
           <p className="text-[11px] font-black text-indigo-500 uppercase tracking-[0.6em] mb-6">Social Shard Engine v7.5</p>
           <h2 className="text-7xl lg:text-9xl font-black tracking-tighter text-white uppercase italic drop-shadow-2xl">{game.name}</h2>
@@ -150,27 +180,35 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
              </p>
           </div>
 
-          <div className="lg:col-span-4 flex items-center gap-8 bg-black/60 p-8 rounded-[3.5rem] border border-white/10 shadow-[inset_0_10px_40px_rgba(0,0,0,0.5)]">
-            <button 
+          <div className="lg:col-span-3 flex items-center gap-8 bg-black/60 p-8 rounded-[3.5rem] border border-white/10 shadow-[inset_0_10px_40px_rgba(0,0,0,0.5)]">
+            <button
               onClick={() => setBet(prev => Math.max(game.minBet, prev - 1))}
               disabled={isSpinning}
-              className="w-20 h-20 rounded-3xl bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center text-xl transition-all shadow-xl active:scale-90 disabled:opacity-30"
+              className="w-16 h-16 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center text-lg transition-all shadow-xl active:scale-90 disabled:opacity-30"
             ><i className="fa-solid fa-minus"></i></button>
             <div className="flex-1 text-center">
-              <p className="text-[10px] text-slate-600 font-black uppercase tracking-[0.4em] mb-2">Shard bet</p>
-              <p className="font-black text-5xl text-white italic tracking-tighter leading-none">{bet}</p>
+              <p className="text-[9px] text-slate-600 font-black uppercase tracking-[0.4em] mb-2">Shard bet</p>
+              <p className="font-black text-4xl text-white italic tracking-tighter leading-none">{bet}</p>
             </div>
-            <button 
+            <button
               onClick={() => setBet(prev => prev + 1)}
               disabled={isSpinning}
-              className="w-20 h-20 rounded-3xl bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center text-xl transition-all shadow-xl active:scale-90 disabled:opacity-30"
+              className="w-16 h-16 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center text-lg transition-all shadow-xl active:scale-90 disabled:opacity-30"
             ><i className="fa-solid fa-plus"></i></button>
           </div>
 
           <button
-            onClick={spin}
+            onClick={() => setIsBuyBonusModalOpen(true)}
+            disabled={isSpinning || currentBalance < bet * (game.mathModel.buyBonusMultiplier || 80)}
+            className="lg:col-span-2 py-8 rounded-[3.5rem] bg-amber-500/10 border border-amber-500/20 text-amber-500 font-black text-xs uppercase tracking-widest hover:bg-amber-500/20 transition-all disabled:opacity-20 active:scale-95"
+          >
+            <i className="fa-solid fa-bolt mr-2"></i> Buy Bonus
+          </button>
+
+          <button
+            onClick={() => spin()}
             disabled={isSpinning || currentBalance < bet}
-            className={`lg:col-span-4 py-10 rounded-[3.5rem] font-black text-5xl tracking-[0.3em] transition-all shadow-[0_30px_100px_rgba(99,102,241,0.4)] relative overflow-hidden group/spin-btn border-b-8 ${
+            className={`lg:col-span-3 py-10 rounded-[3.5rem] font-black text-5xl tracking-[0.3em] transition-all shadow-[0_30px_100px_rgba(99,102,241,0.4)] relative overflow-hidden group/spin-btn border-b-8 ${
               isSpinning || currentBalance < bet 
               ? 'bg-slate-800 text-slate-600 cursor-not-allowed border-transparent opacity-40 grayscale' 
               : 'bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-600 text-white border-black/40 hover:scale-[1.03] active:scale-[0.97] active:border-b-0 active:translate-y-2'
@@ -183,6 +221,34 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
           </button>
         </div>
       </div>
+
+      {/* Buy Bonus Matrix Modal */}
+      {isBuyBonusModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-xl p-8 animate-fadeIn">
+           <div className="max-w-xl w-full bg-slate-900 rounded-[4rem] border-8 border-amber-500/30 p-16 shadow-[0_0_150px_rgba(245,158,11,0.2)] relative">
+              <div className="absolute top-0 left-0 w-full h-2 bg-amber-500"></div>
+              <h3 className="text-5xl font-black italic text-white uppercase tracking-tighter mb-4 text-center">Feature Shard Access</h3>
+              <p className="text-xs text-slate-400 text-center mb-12 uppercase tracking-widest font-bold">Guaranteed Matrix Alignment Entry</p>
+
+              <div className="bg-black/40 rounded-3xl p-10 border border-white/5 mb-12 text-center">
+                 <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest mb-4">Synthesis Cost</p>
+                 <p className="text-6xl font-black text-amber-500 italic tracking-tighter">{(bet * (game.mathModel.buyBonusMultiplier || 80)).toLocaleString()}</p>
+                 <p className="mt-2 text-xs text-slate-600 font-bold uppercase">{currency}</p>
+              </div>
+
+              <div className="flex gap-4">
+                 <button
+                   onClick={() => { spin(true); setIsBuyBonusModalOpen(false); }}
+                   className="flex-1 py-6 bg-amber-500 text-black font-black rounded-2xl uppercase tracking-[0.2em] text-xs hover:scale-[1.03] transition-all shadow-2xl"
+                 >Initialize Bonus</button>
+                 <button
+                   onClick={() => setIsBuyBonusModalOpen(false)}
+                   className="flex-1 py-6 bg-white/5 text-slate-400 font-black rounded-2xl uppercase tracking-[0.2em] text-xs hover:bg-white/10 transition-all"
+                 >Abort</button>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };

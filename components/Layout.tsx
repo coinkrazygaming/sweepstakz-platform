@@ -94,6 +94,16 @@ export const Layout: React.FC<LayoutProps> = ({
           )}
 
           <div className="flex items-center gap-6">
+            <button
+              onClick={() => {
+                const roles = [UserRole.PLAYER, UserRole.OPERATOR, UserRole.MASTER_ADMIN];
+                const next = roles[(roles.indexOf(user?.role || UserRole.PLAYER) + 1) % roles.length];
+                onSwitchRole(next);
+              }}
+              className="p-3 bg-white/5 hover:bg-white/10 rounded-xl text-[9px] font-black uppercase tracking-widest text-slate-400 border border-white/5 transition-all"
+            >
+              Switch Role
+            </button>
             <div className="text-right hidden sm:block">
               <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">{user?.role}</p>
               <p className="text-sm font-bold text-white italic">{user?.username}</p>
