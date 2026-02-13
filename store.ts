@@ -86,9 +86,14 @@ const DEFAULT_DATA: AppData = {
 };
 
 export const getStore = (): AppData => {
-  const data = localStorage.getItem(STORAGE_KEY);
-  if (!data) return DEFAULT_DATA;
-  return JSON.parse(data);
+  try {
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (!data) return DEFAULT_DATA;
+    return JSON.parse(data);
+  } catch (e) {
+    console.error("Failed to load store:", e);
+    return DEFAULT_DATA;
+  }
 };
 
 export const saveStore = (data: AppData) => {

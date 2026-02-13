@@ -7,7 +7,7 @@ import { getStore, saveStore, createAuditLog } from './store';
 import { authService } from './services/authService';
 import { Layout } from './components/Layout';
 import { SlotGame } from './components/SlotGame';
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
 const PRIZE_STORE_ITEMS = [
   {
@@ -415,7 +415,7 @@ const App: React.FC = () => {
     logTerminal(`ART LAB: Synthesizing ${artTarget} for "${artPrompt}"...`);
 
     try {
-      const apiKey = (process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY) as string;
+      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY) as string;
       const ai = new GoogleGenAI(apiKey);
       const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
@@ -466,7 +466,7 @@ const App: React.FC = () => {
     logTerminal(`ACTIVATE DESIGNER AI: Conceptualizing "${conceptPrompt}"...`);
 
     try {
-      const apiKey = (process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY) as string;
+      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY) as string;
       const ai = new GoogleGenAI(apiKey);
       const model = ai.getGenerativeModel({
         model: 'gemini-1.5-pro',
@@ -538,7 +538,7 @@ const App: React.FC = () => {
     setTerminalOutput(['BOOTING SHARD INGRESS ENGINE v7.5...', 'SCANNING LEGACY ASSET BUNDLES...']);
 
     try {
-      const apiKey = (process.env.GEMINI_API_KEY || (import.meta as any).env?.VITE_GEMINI_API_KEY || process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY) as string;
+      const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY) as string;
       const ai = new GoogleGenAI(apiKey);
       const model = ai.getGenerativeModel({
         model: 'gemini-1.5-flash',
