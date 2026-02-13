@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Game, CurrencyType, Wallet, ProvablyFairRecord } from '../types';
 
@@ -16,7 +15,15 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
   const [lastWin, setLastWin] = useState(0);
   const [fairnessRecord, setFairnessRecord] = useState<ProvablyFairRecord | null>(null);
   
-  const spinInterval = useRef<any>(null);
+  const spinInterval = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (spinInterval.current !== null) {
+        clearInterval(spinInterval.current);
+      }
+    };
+  }, []);
   const currentBalance = currency === CurrencyType.GOLD_COIN ? wallet.goldCoins : wallet.sweepsCoins;
 
   const generateFairResult = useCallback(() => {
@@ -27,7 +34,7 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
     // Simulate provably fair hashing via HMAC-SHA256 analog
     const hash = btoa(`${serverSeed}:${clientSeed}:${nonce}`).substring(0, 32);
     
-    const symbols = game.mathModel.reelStrips[0];
+    const symbols = game.mathModel.reelStrips?.[0] || ['?'];
     const finalReels = reels.map(() => symbols[Math.floor(Math.random() * symbols.length)]);
     
     return {
@@ -49,15 +56,18 @@ export const SlotGame: React.FC<SlotGameProps> = ({ game, currency, wallet, onSp
     setFairnessRecord(record);
 
     let counter = 0;
-    const allSymbols = game.mathModel.reelStrips[0];
+    const allSymbols = game.mathModel.reelStrips?.[0] || ['?'];
 
     // Audio simulation can go here
 
-    spinInterval.current = setInterval(() => {
+    spinInterval.current = window.setInterval(() => {
       setReels(prev => prev.map(() => allSymbols[Math.floor(Math.random() * allSymbols.length)]));
       counter++;
       if (counter > 25) {
-        clearInterval(spinInterval.current);
+        if (spinInterval.current !== null) {
+          clearInterval(spinInterval.current);
+          spinInterval.current = null;
+        }
         setReels(record.resultReels);
 
         // Advanced Win Logic

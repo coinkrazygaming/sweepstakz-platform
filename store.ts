@@ -1,4 +1,3 @@
-
 import { User, Operator, UserRole, Game, AuditLog, Transaction, SlotArchetype } from './types';
 
 const STORAGE_KEY = 'sweepstack_studio_v1';
@@ -41,7 +40,9 @@ const DEFAULT_VISUALS: any = {
   ],
   backgroundUrl: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f',
   themeColors: { primary: '#6366f1', secondary: '#4f46e5', accent: '#f0abfc' },
-  uiSkins: 'modern'
+  uiSkins: 'modern',
+  fontFamily: 'Inter',
+  soundPack: 'Electric'
 };
 
 const DEFAULT_DATA: AppData = {

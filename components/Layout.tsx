@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 // Fix: Removed non-existent Theme from imports
 import { User, UserRole, Operator } from '../types';
@@ -45,16 +44,16 @@ export const Layout: React.FC<LayoutProps> = ({
     
     if (user?.role === UserRole.OPERATOR) {
       return {
-        primary: operator?.branding.primaryColor || '#6366f1',
+        primary: operator?.branding?.primaryColor || '#6366f1',
         bgClass: 'bg-slate-950',
         label: `Operator Admin: ${operator?.name || 'Shard'}`
       };
     }
 
     return {
-      primary: operator?.branding.primaryColor || activeTheme.primary,
+      primary: operator?.branding?.primaryColor || activeTheme.primary,
       bgClass: activeTheme.bgClass,
-      label: operator?.branding.siteName || 'Casino Floor'
+      label: operator?.branding?.siteName || 'Casino Floor'
     };
   }, [user?.role, operator]);
 
@@ -63,15 +62,15 @@ export const Layout: React.FC<LayoutProps> = ({
       {/* Universal Multi-Tenant Navbar */}
       <nav className="glass border-b border-white/5 px-8 py-5 flex justify-between items-center sticky top-0 z-[60]">
         <div className="flex items-center gap-5">
-          <div 
+          <div
             className="w-12 h-12 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-2xl transition-all duration-1000 rotate-2"
             style={{ background: `linear-gradient(135deg, ${styling.primary}, #000000)` }}
           >
-            {operator?.branding.siteName[0] || 'S'}
+            {operator?.branding?.siteName?.[0] || 'S'}
           </div>
           <div>
             <h1 className="font-black text-xl italic leading-none tracking-tighter uppercase">
-              {operator?.branding.siteName || 'SweepStack'}
+              {operator?.branding?.siteName || 'SweepStack'}
             </h1>
             <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mt-1">
               {styling.label}
